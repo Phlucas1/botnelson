@@ -1,132 +1,101 @@
-import json
+import logging
 import os
-from datetime import datetime
+import asyncio
+import nest_asyncio
+from datetime import datetime, timedelta
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler,
+    filters
+)
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import pytz
-from collections import defaultdict
+from apscheduler.triggers.cron import CronTrigger
 
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-ARQUIVO = "financas.json"
+# Configuração de logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
-def carregar_dados():
-    if os.path.exists(ARQUIVO):
-        with open(ARQUIVO, 'r') as f:
-            return json.load(f)
-    return {}
+# Token do bot (substitua pela sua variável de ambiente)
+TOKEN = os.getenv("BOT_TOKEN")
 
-def salvar_dados(dados):
-    with open(ARQUIVO, 'w') as f:
-        json.dump(dados, f, indent=2)
+# ID do grupo para enviar mensagens automáticas
+GROUP_CHAT_ID = -4788783750
 
-def mes_atual():
-    return datetime.now().strftime("%Y-%m")
+# Saldo inicial
+saldo = 0.0
 
-async def registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text.lower()
-    partes = texto.split()
-    if len(partes) < 2:
-        await update.message.reply_text("⚠️ Use: entrada/gasto valor categoria")
-        return
-    tipo, valor_txt = partes[0], partes[1]
-    categoria = " ".join(partes[2:]) if len(partes) > 2 else "outros"
+# Lista de transações
+transacoes = []
+
+# Comando /entrada
+async def entrada(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global saldo
     try:
-        valor = float(valor_txt.replace(",", "."))
-    except:
-        await update.message.reply_text("❌ Valor inválido.")
-        return
-    dados = carregar_dados()
-    mes = mes_atual()
-    if mes not in dados:
-        dados[mes] = {"entradas": [], "saidas": []}
-    registro = {"valor": valor, "categoria": categoria}
-    if tipo == "entrada":
-        dados[mes]["entradas"].append(registro)
-        await update.message.reply_text(f"✅ Entrada de R$ {valor:.2f} registrada em '{categoria}'")
-    elif tipo in ["gasto", "saida", "fatura"]:
-        dados[mes]["saidas"].append(registro)
-        await update.message.reply_text(f"❌ Saída de R$ {valor:.2f} registrada em '{categoria}'")
-    else:
-        await update.message.reply_text("⚠️ Use 'entrada', 'gasto' ou 'fatura'.")
-    salvar_dados(dados)
+        valor = float(context.args[0])
+        descricao = ' '.join(context.args[1:]) if len(context.args) > 1 else 'Entrada'
+        saldo += valor
+        transacoes.append(('entrada', valor, descricao, datetime.now()))
+        await update.message.reply_text(f'Entrada de R${valor:.2f} registrada. Saldo atual: R${saldo:.2f}')
+    except (IndexError, ValueError):
+        await update.message.reply_text('Uso correto: /entrada valor descrição(opcional)')
 
-def gerar_relatorio(mes=None):
-    dados = carregar_dados()
-    mes = mes or mes_atual()
-    if mes not in dados:
-        return f"📅 Nenhum dado encontrado para {mes}."
-    entradas = dados[mes]["entradas"]
-    saidas = dados[mes]["saidas"]
-    def classificar(lista):
-        soma_por_cat = defaultdict(float)
-        total = 0.0
-        for item in lista:
-            soma_por_cat[item["categoria"]] += item["valor"]
-            total += item["valor"]
-        return soma_por_cat, total
-    entradas_cat, total_entradas = classificar(entradas)
-    saidas_cat, total_saidas = classificar(saidas)
-    saldo = total_entradas - total_saidas
-    def formatar(cat_dict, total):
-        linhas = []
-        for cat, val in cat_dict.items():
-            pct = (val / total * 100) if total else 0
-            linhas.append(f"- {cat}: R$ {val:.2f} ({pct:.2f}%)")
-        return "\n".join(linhas)
-    nome_mes = datetime.strptime(mes, "%Y-%m").strftime("%B %Y")
-    relatorio = f"""📆 Mês: {nome_mes}
+# Comando /saida
+async def saida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global saldo
+    try:
+        valor = float(context.args[0])
+        descricao = ' '.join(context.args[1:]) if len(context.args) > 1 else 'Saída'
+        saldo -= valor
+        transacoes.append(('saida', valor, descricao, datetime.now()))
+        await update.message.reply_text(f'Saída de R${valor:.2f} registrada. Saldo atual: R${saldo:.2f}')
+    except (IndexError, ValueError):
+        await update.message.reply_text('Uso correto: /saida valor descrição(opcional)')
 
-💰 Entradas (R$ {total_entradas:.2f}):
-{formatar(entradas_cat, total_entradas)}
+# Comando /saldo
+async def saldo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(f'Saldo atual: R${saldo:.2f}')
 
-💸 Gastos (R$ {total_saidas:.2f}):
-{formatar(saidas_cat, total_saidas)}
-
-💼 Saldo final: R$ {saldo:.2f}"""
+# Função para gerar relatório mensal
+def gerar_relatorio():
+    entradas = sum(v for t, v, _, _ in transacoes if t == 'entrada')
+    saidas = sum(v for t, v, _, _ in transacoes if t == 'saida')
+    saldo_final = entradas - saidas
+    relatorio = (
+        f"📊 *Relatório Financeiro do Mês*\n\n"
+        f"💰 Entradas: R${entradas:.2f}\n"
+        f"💸 Saídas: R${saidas:.2f}\n"
+        f"🧾 Saldo final: R${saldo_final:.2f}"
+    )
     return relatorio
 
-async def relatorio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = gerar_relatorio()
-    await update.message.reply_text(msg)
+# Tarefa agendada
+async def tarefa_agendada(context: ContextTypes.DEFAULT_TYPE):
+    relatorio = gerar_relatorio()
+    await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=relatorio, parse_mode='Markdown')
 
-async def confirmar_relatorio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = gerar_relatorio()
-    await update.message.reply_text(f"📊 Relatório confirmado!\n\n{msg}")
-
-async def resetar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    salvar_dados({})
-    await update.message.reply_text("🔄 Dados de todos os meses foram apagados.")
-
-async def aviso_relatorio(context: ContextTypes.DEFAULT_TYPE):
-    if CHAT_ID:
-        await context.bot.send_message(
-            chat_id=CHAT_ID,
-            text="📝 Já lançaram todos os gastos e entradas do mês anterior? Envie /confirmar_relatorio para gerar o relatório."
-        )
-
+# Função principal
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("relatorio", relatorio_cmd))
-    app.add_handler(CommandHandler("confirmar_relatorio", confirmar_relatorio))
-    app.add_handler(CommandHandler("resetar", resetar))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, registrar))
-    scheduler = AsyncIOScheduler(timezone=pytz.timezone("America/Sao_Paulo"))
-    scheduler.add_job(aviso_relatorio, "cron", day="1-10", hour=8, minute=0, args=[app.bot])
+
+    app.add_handler(CommandHandler("entrada", entrada))
+    app.add_handler(CommandHandler("saida", saida))
+    app.add_handler(CommandHandler("saldo", saldo_cmd))
+
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        tarefa_agendada,
+        CronTrigger(day="5", hour=9, minute=0),
+        args=[app.bot],
+    )
     scheduler.start()
+
     print("Bot rodando...")
     await app.run_polling()
 
-import asyncio
+# Inicializa nest_asyncio e roda o bot
+if __name__ == '__main__':
+    nest_asyncio.apply()
+    asyncio.get_event_loop().run_until_complete(main())
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except RuntimeError as e:
-        if "already running" in str(e):
-            loop = asyncio.get_event_loop()
-            loop.create_task(main())
-            loop.run_forever()
-        else:
-            raise
