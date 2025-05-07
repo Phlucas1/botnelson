@@ -41,7 +41,7 @@ async def entrada(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         descricao = ' '.join(context.args[1:]) if len(context.args) > 1 else 'Entrada'
         saldo += valor
         transacoes.append(('entrada', valor, descricao, datetime.now()))
-        await update.message.reply_text(f'Entrada de R${valor:.2f} registrada. Saldo atual: R${saldo:.2f}')
+        await update.message.reply_text(f'Entrada de R${valor:,.2f} registrada. Saldo atual: R${saldo:,.2f}')
     except (IndexError, ValueError):
         await update.message.reply_text('Uso correto: /entrada valor descrição(opcional)')
 
@@ -53,13 +53,13 @@ async def saida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         descricao = ' '.join(context.args[1:]) if len(context.args) > 1 else 'Saída'
         saldo -= valor
         transacoes.append(('saida', valor, descricao, datetime.now()))
-        await update.message.reply_text(f'Saída de R${valor:.2f} registrada. Saldo atual: R${saldo:.2f}')
+        await update.message.reply_text(f'Saída de R${valor:,.2f} registrada. Saldo atual: R${saldo:,.2f}')
     except (IndexError, ValueError):
         await update.message.reply_text('Uso correto: /saida valor descrição(opcional)')
 
 # Comando /saldo
 async def saldo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(f'Saldo atual: R${saldo:.2f}')
+    await update.message.reply_text(f'Saldo atual: R${saldo:,.2f}')
 
 # Comando /listar
 async def listar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -69,7 +69,7 @@ async def listar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = "Lista de transações:\n"
         for transacao in transacoes:
             tipo, valor, descricao, data = transacao
-            msg += f"{data.strftime('%d/%m/%Y %H:%M:%S')} - {tipo.capitalize()}: R${valor:.2f} - {descricao}\n"
+            msg += f"{data.strftime('%d/%m/%Y %H:%M:%S')} - {tipo.capitalize()}: R${valor:,.2f} - {descricao}\n"
         await update.message.reply_text(msg)
 
 # Comando /relatorio
@@ -84,18 +84,21 @@ def gerar_relatorio():
     saldo_final = entradas - saidas
     relatorio = (
         f"📊 *Relatório Financeiro do Mês*\n\n"
-        f"💰 Entradas: R${entradas:.2f}\n"
-        f"💸 Saídas: R${saidas:.2f}\n"
-        f"🧾 Saldo final: R${saldo_final:.2f}"
+        f"💰 Entradas: R${entradas:,.2f}\n"
+        f"💸 Saídas: R${saidas:,.2f}\n"
+        f"🧾 Saldo final: R${saldo_final:,.2f}"
     )
     return relatorio
 
 # Comando /limpar
 async def limpar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    global transacoes, saldo
-    transacoes = []
-    saldo = 0.0
-    await update.message.reply_text("Todas as transações e o saldo foram limpos.")
+    if len(context.args) > 0 and context.args[0].lower() == 'sim':
+        global transacoes, saldo
+        transacoes = []
+        saldo = 0.0
+        await update.message.reply_text("Todas as transações e o saldo foram limpos.")
+    else:
+        await update.message.reply_text("Tem certeza que deseja limpar todos os registros? Se sim, digite /limpar sim.")
 
 # Comando /ajuda
 async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -107,7 +110,7 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/saldo - Exibe o saldo atual\n"
         "/listar - Exibe todas as transações registradas\n"
         "/relatorio - Gera o relatório financeiro do mês\n"
-        "/limpar - Limpa todas as transações e zera o saldo\n"
+        "/limpar - Limpa todas as transações e zera o saldo. Para confirmar, use /limpar sim\n"
         "/ajuda - Exibe este menu de ajuda"
     )
     await update.message.reply_text(ajuda_msg)
