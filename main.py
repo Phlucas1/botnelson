@@ -1,165 +1,147 @@
 import logging
 import os
-import pandas as pd
-from apscheduler.schedulers.background import BackgroundScheduler
+import asyncio
+import nest_asyncio
+from datetime import datetime, timedelta
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler,
+    filters
+)
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
-# Configurações de logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configuração de logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
-# ID do grupo
+# Token do bot (substitua pela sua variável de ambiente)
+TOKEN = os.getenv("BOT_TOKEN")
+
+# ID do grupo para enviar mensagens automáticas
 GROUP_CHAT_ID = -4788783750
 
-# Carregar as credenciais do Google
-creds = Credentials.from_service_account_file("credentials.json", scopes=["https://www.googleapis.com/auth/spreadsheets"])
+# Saldo inicial
+saldo = 0.0
 
-# ID da planilha
-SPREADSHEET_ID = 'sua-planilha-id'
+# Lista de transações
+transacoes = []
 
-# Função para autenticação com Google Sheets
-def get_google_sheets_service():
-    return build('sheets', 'v4', credentials=creds)
+# Comando /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text("Olá! Sou o bot para registrar suas finanças. Use /entrada, /saida, /saldo, /listar, /relatorio, /limpar e /ajuda para mais informações.")
 
-# Função para registrar entrada
-async def entrada(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Comando /entrada
+async def entrada(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global saldo
     try:
         valor = float(context.args[0])
-        descricao = ' '.join(context.args[1:])
-        # Aqui você faria a inserção no Google Sheets
-        # Exemplo de lógica de inserção no Google Sheets
-        service = get_google_sheets_service()
-        sheet = service.spreadsheets()
-        # Insere o valor da entrada na planilha
-        sheet.values().append(spreadsheetId=SPREADSHEET_ID, range="Entradas!A1", valueInputOption="RAW", body={
-            'values': [[valor, descricao]]
-        }).execute()
-        await update.message.reply_text(f"Entrada registrada: {valor} - {descricao}")
+        descricao = ' '.join(context.args[1:]) if len(context.args) > 1 else 'Entrada'
+        saldo += valor
+        transacoes.append(('entrada', valor, descricao, datetime.now()))
+        await update.message.reply_text(f'Entrada de R${valor:.2f} registrada. Saldo atual: R${saldo:.2f}')
     except (IndexError, ValueError):
-        await update.message.reply_text("Por favor, use o formato: /entrada <valor> <descrição>.")
+        await update.message.reply_text('Uso correto: /entrada valor descrição(opcional)')
 
-# Função para registrar saída
-async def saida(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Comando /saida
+async def saida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global saldo
     try:
         valor = float(context.args[0])
-        descricao = ' '.join(context.args[1:])
-        # Aqui você faria a inserção no Google Sheets
-        # Exemplo de lógica de inserção no Google Sheets
-        service = get_google_sheets_service()
-        sheet = service.spreadsheets()
-        # Insere o valor da saída na planilha
-        sheet.values().append(spreadsheetId=SPREADSHEET_ID, range="Saídas!A1", valueInputOption="RAW", body={
-            'values': [[valor, descricao]]
-        }).execute()
-        await update.message.reply_text(f"Saída registrada: {valor} - {descricao}")
+        descricao = ' '.join(context.args[1:]) if len(context.args) > 1 else 'Saída'
+        saldo -= valor
+        transacoes.append(('saida', valor, descricao, datetime.now()))
+        await update.message.reply_text(f'Saída de R${valor:.2f} registrada. Saldo atual: R${saldo:.2f}')
     except (IndexError, ValueError):
-        await update.message.reply_text("Por favor, use o formato: /saida <valor> <descrição>.")
+        await update.message.reply_text('Uso correto: /saida valor descrição(opcional)')
 
-# Função para calcular e retornar o saldo
-async def saldo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        # Recupera os dados da planilha de entradas e saídas
-        service = get_google_sheets_service()
-        sheet = service.spreadsheets()
-        
-        # Obter entradas e saídas
-        entradas = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range="Entradas!A:A").execute()
-        saidas = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range="Saídas!A:A").execute()
+# Comando /saldo
+async def saldo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(f'Saldo atual: R${saldo:.2f}')
 
-        # Calcular o saldo
-        total_entradas = sum(float(entry[0]) for entry in entradas.get('values', []))
-        total_saidas = sum(float(entry[0]) for entry in saidas.get('values', []))
-        saldo = total_entradas - total_saidas
-        
-        await update.message.reply_text(f"O saldo atual é: R${saldo:.2f}")
-    except Exception as e:
-        logger.error(f"Erro ao calcular saldo: {e}")
-        await update.message.reply_text("Erro ao calcular o saldo.")
+# Comando /listar
+async def listar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not transacoes:
+        await update.message.reply_text("Nenhuma transação registrada.")
+    else:
+        msg = "Lista de transações:\n"
+        for transacao in transacoes:
+            tipo, valor, descricao, data = transacao
+            msg += f"{data.strftime('%d/%m/%Y %H:%M:%S')} - {tipo.capitalize()}: R${valor:.2f} - {descricao}\n"
+        await update.message.reply_text(msg)
 
-# Função para gerar o relatório
-async def relatorio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        # Obter as entradas e saídas
-        service = get_google_sheets_service()
-        sheet = service.spreadsheets()
-        
-        entradas = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range="Entradas!A:B").execute()
-        saídas = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range="Saídas!A:B").execute()
+# Comando /relatorio
+async def relatorio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    relatorio = gerar_relatorio()
+    await update.message.reply_text(relatorio, parse_mode='Markdown')
 
-        df_entradas = pd.DataFrame(entradas.get('values', []), columns=["Valor", "Descrição"])
-        df_saidas = pd.DataFrame(saídas.get('values', []), columns=["Valor", "Descrição"])
+# Função para gerar relatório mensal
+def gerar_relatorio():
+    entradas = sum(v for t, v, _, _ in transacoes if t == 'entrada')
+    saidas = sum(v for t, v, _, _ in transacoes if t == 'saida')
+    saldo_final = entradas - saidas
+    relatorio = (
+        f"📊 *Relatório Financeiro do Mês*\n\n"
+        f"💰 Entradas: R${entradas:.2f}\n"
+        f"💸 Saídas: R${saidas:.2f}\n"
+        f"🧾 Saldo final: R${saldo_final:.2f}"
+    )
+    return relatorio
 
-        # Total de entradas e saídas
-        total_entradas = df_entradas["Valor"].astype(float).sum()
-        total_saidas = df_saidas["Valor"].astype(float).sum()
+# Comando /limpar
+async def limpar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global transacoes, saldo
+    transacoes = []
+    saldo = 0.0
+    await update.message.reply_text("Todas as transações e o saldo foram limpos.")
 
-        # Envio do resumo
-        relatorio_texto = f"Relatório do mês:\n\n"
-        relatorio_texto += f"Total de Entradas: R${total_entradas:.2f}\n"
-        relatorio_texto += f"Total de Saídas: R${total_saidas:.2f}\n"
-        relatorio_texto += f"Saldo Final: R${total_entradas - total_saidas:.2f}"
+# Comando /ajuda
+async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ajuda_msg = (
+        "Comandos disponíveis:\n\n"
+        "/start - Inicia o bot e exibe informações básicas\n"
+        "/entrada <valor> <descrição(opcional)> - Registra uma entrada de dinheiro\n"
+        "/saida <valor> <descrição(opcional)> - Registra uma saída de dinheiro\n"
+        "/saldo - Exibe o saldo atual\n"
+        "/listar - Exibe todas as transações registradas\n"
+        "/relatorio - Gera o relatório financeiro do mês\n"
+        "/limpar - Limpa todas as transações e zera o saldo\n"
+        "/ajuda - Exibe este menu de ajuda"
+    )
+    await update.message.reply_text(ajuda_msg)
 
-        await update.message.reply_text(relatorio_texto)
-    except Exception as e:
-        logger.error(f"Erro ao gerar relatório: {e}")
-        await update.message.reply_text("Erro ao gerar o relatório.")
+# Tarefa agendada
+async def tarefa_agendada(context: ContextTypes.DEFAULT_TYPE):
+    relatorio = gerar_relatorio()
+    await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=relatorio, parse_mode='Markdown')
 
-# Função para limpar registros
-async def limpar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if update.message.text.lower() == '/limpar':
-            await update.message.reply_text("Você tem certeza de que deseja apagar todos os registros? Responda com 'sim' ou 'não'.")
-        else:
-            if update.message.text.lower() == 'sim':
-                service = get_google_sheets_service()
-                sheet = service.spreadsheets()
+# Função principal
+async def main():
+    app = ApplicationBuilder().token(TOKEN).build()
 
-                # Limpar entradas e saídas
-                sheet.values().clear(spreadsheetId=SPREADSHEET_ID, range="Entradas!A:B").execute()
-                sheet.values().clear(spreadsheetId=SPREADSHEET_ID, range="Saídas!A:B").execute()
-                await update.message.reply_text("Registros apagados com sucesso.")
-            else:
-                await update.message.reply_text("Operação cancelada.")
-    except Exception as e:
-        logger.error(f"Erro ao limpar registros: {e}")
-        await update.message.reply_text("Erro ao limpar os registros.")
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("entrada", entrada))
+    app.add_handler(CommandHandler("saida", saida))
+    app.add_handler(CommandHandler("saldo", saldo_cmd))
+    app.add_handler(CommandHandler("listar", listar))
+    app.add_handler(CommandHandler("relatorio", relatorio))
+    app.add_handler(CommandHandler("limpar", limpar))
+    app.add_handler(CommandHandler("ajuda", ajuda))
 
-# Função para mostrar os comandos de ajuda
-async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    comandos = """
-    Comandos disponíveis:
-    
-    /entrada <valor> <descrição> - Registrar uma entrada (renda)
-    /saida <valor> <descrição> - Registrar uma saída (gasto)
-    /saldo - Verificar o saldo atual
-    /relatorio - Gerar relatório com totais e percentuais
-    /limpar - Apagar todos os registros (confirmar com 'sim')
-    /ajuda - Exibir esta lista de comandos
-    """
-    await update.message.reply_text(comandos)
-
-# Função principal para rodar o bot
-def main():
-    application = Application.builder().token('SEU_TOKEN_AQUI').build()
-
-    # Adicionar os comandos
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("entrada", entrada))
-    application.add_handler(CommandHandler("saida", saida))
-    application.add_handler(CommandHandler("saldo", saldo))
-    application.add_handler(CommandHandler("relatorio", relatorio))
-    application.add_handler(CommandHandler("limpar", limpar))
-    application.add_handler(CommandHandler("ajuda", ajuda))
-
-    # Agendar tarefa para rodar no 5º dia útil
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(tarefa_agendada, 'cron', day_of_week='mon,tue,wed,thu,fri', hour=9, minute=0, id='tarefa_agendada')
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        tarefa_agendada,
+        CronTrigger(day="5", hour=9, minute=0),
+        args=[app.bot],
+    )
     scheduler.start()
 
-    application.run_polling()
+    print("Bot rodando...")
+    await app.run_polling()
 
+# Inicializa nest_asyncio e roda o bot
 if __name__ == '__main__':
-    main()
+    nest_asyncio.apply()
+    asyncio.get_event_loop().run_until_complete(main())
