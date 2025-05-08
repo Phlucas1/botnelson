@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: botnelson
+    env: python
+    plan: free
+    region: oregon  # Or use frankfurt if you're in Europe
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python main.py"
+    envVars:
+      - key: BOT_TOKEN
+        sync: false  # You will securely add this in the Render dashboard
