@@ -56,27 +56,37 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def entrada(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global saldo
     try:
-        valor = float(context.args[0])
+        # Replace comma with period for float conversion
+        valor = float(context.args[0].replace(',', '.'))
         descricao = ' '.join(context.args[1:]) if len(context.args) > 1 else 'Entrada'
         saldo += valor
         transacoes.append(('entrada', valor, descricao, datetime.now()))
-        salvar_dados()
-        await update.message.reply_text(f'Entrada de R${valor:,.2f} registrada. Saldo atual: R${saldo:,.2f}')
-    except (IndexError, ValueError):
-        await update.message.reply_text('Uso correto: /entrada valor descrição(opcional)')
+        
+        # Check if update.message is available before replying
+        if update.message:
+            await update.message.reply_text(f'Entrada de R${valor:,.2f} registrada. Saldo atual: R${saldo:,.2f}')
+    except (IndexError, ValueError) as e:
+        # Check if update.message is available before replying
+        if update.message:
+            await update.message.reply_text('Uso correto: /entrada valor descrição(opcional)')
 
 # Comando /saida
 async def saida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global saldo
     try:
-        valor = float(context.args[0])
+        # Replace comma with period for float conversion
+        valor = float(context.args[0].replace(',', '.'))
         descricao = ' '.join(context.args[1:]) if len(context.args) > 1 else 'Saída'
         saldo -= valor
         transacoes.append(('saida', valor, descricao, datetime.now()))
-        salvar_dados()
-        await update.message.reply_text(f'Saída de R${valor:,.2f} registrada. Saldo atual: R${saldo:,.2f}')
-    except (IndexError, ValueError):
-        await update.message.reply_text('Uso correto: /saida valor descrição(opcional)')
+        
+        # Check if update.message is available before replying
+        if update.message:
+            await update.message.reply_text(f'Saída de R${valor:,.2f} registrada. Saldo atual: R${saldo:,.2f}')
+    except (IndexError, ValueError) as e:
+        # Check if update.message is available before replying
+        if update.message:
+            await update.message.reply_text('Uso correto: /saida valor descrição(opcional)')
 
 # Comando /saldo
 async def saldo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
